@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import font
+import math
 
 # Create the main window
 root = tk.Tk()
@@ -29,8 +30,12 @@ root.geometry(f'{window_width}x{window_height}+{x}+{y}')
 window_x = x
 window_y = y
 
+# Base transparency settings
+base_alpha = 0.9  # Normal transparency
+auto_hide_mode = False  # Auto hide mode state
+
 # Make window background transparent (optional)
-root.attributes('-alpha', 0.9)  # 0.0 = fully transparent, 1.0 = fully opaque
+root.attributes('-alpha', base_alpha)  # 0.0 = fully transparent, 1.0 = fully opaque
 
 # Configure background color
 root.configure(bg='black')
@@ -127,6 +132,72 @@ def set_lock_mode():
     move_mode = False
     print(f"DEBUG: move_mode set to {move_mode}")
     update_menu()
+
+# Toggle auto hide mode
+def toggle_auto_hide():
+    global auto_hide_mode
+    auto_hide_mode = not auto_hide_mode
+    print(f"DEBUG: Auto hide mode = {auto_hide_mode}")
+    if auto_hide_mode:
+        check_cursor_proximity()
+    else:
+        # Restore base alpha
+        root.attributes('-alpha', base_alpha)
+    update_menu()
+
+# Check cursor proximity for auto-hide mode
+def check_cursor_proximity():
+    global auto_hide_mode
+    if not auto_hide_mode:
+        return
+    
+    try:
+        # Get cursor position (screen coordinates)
+        cursor_x = root.winfo_pointerx()
+        cursor_y = root.winfo_pointery()
+        
+        # Get actual window position and size (including the black box)
+        win_x = root.winfo_x()
+        win_y = root.winfo_y()
+        win_width = root.winfo_width()
+        win_height = root.winfo_height()
+        
+        # Calculate the closest point on the window to the cursor
+        # Clamp cursor position to window bounds
+        closest_x = max(win_x, min(cursor_x, win_x + win_width))
+        closest_y = max(win_y, min(cursor_y, win_y + win_height))
+        
+        # Calculate distance from cursor to the closest point on the window
+        distance = math.sqrt((cursor_x - closest_x)**2 + (cursor_y - closest_y)**2)
+        
+        # Define proximity threshold (pixels) - adjust as needed
+        # This determines how close the cursor needs to be to trigger fade
+        proximity_threshold = 150
+        
+        # Calculate alpha based on distance
+        # When cursor is close (distance = 0): 2% transparency (0.02 alpha)
+        # When cursor is far (distance >= threshold): base_alpha (0.9)
+        if distance >= proximity_threshold:
+            # Far away - restore to base alpha
+            alpha = base_alpha
+        else:
+            # Close - gradually fade to 2%
+            # Map distance from 0 to threshold to alpha from 0.02 to base_alpha
+            ratio = distance / proximity_threshold
+            alpha = 0.02 + (base_alpha - 0.02) * ratio
+        
+        # Ensure alpha is within bounds
+        alpha = max(0.02, min(base_alpha, alpha))
+        
+        root.attributes('-alpha', alpha)
+        
+        # Schedule next check (check every 50ms for smooth transitions)
+        root.after(50, check_cursor_proximity)
+    except Exception as e:
+        # Window might be destroyed or error occurred
+        print(f"DEBUG: Error in check_cursor_proximity: {e}")
+        if auto_hide_mode:
+            root.after(50, check_cursor_proximity)  # Keep checking
 
 # Enable text editing
 def edit_text():
@@ -233,6 +304,11 @@ def update_menu():
     else:
         context_menu.add_command(label="Move mode", command=set_move_mode)
         context_menu.add_command(label="Lock mode ✓", command=set_lock_mode)
+    context_menu.add_separator()
+    if auto_hide_mode:
+        context_menu.add_command(label="Auto hide mode ✓", command=toggle_auto_hide)
+    else:
+        context_menu.add_command(label="Auto hide mode", command=toggle_auto_hide)
     context_menu.add_separator()
     if edit_entry is None:
         context_menu.add_command(label="Edit text", command=edit_text)
