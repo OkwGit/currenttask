@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import font
 import math
 import ctypes
+import time
 
 # Create the main window
 root = tk.Tk()
@@ -34,7 +35,7 @@ window_y = y
 # Base transparency settings
 base_alpha = 0.9  # Normal transparency
 auto_hide_mode = False  # Auto hide mode state
-click_through_mode = False  # Click through mode state
+left_click_through_mode = False  # Left click through mode state
 
 # Track states that require full opacity
 menu_open = False
@@ -58,6 +59,133 @@ label = tk.Label(
 
 # Center the label in the window
 label.pack(expand=True)
+
+# Create gear icon button (always clickable)
+gear_button = None
+gear_window = None
+
+def create_gear_button():
+    """Create a gear icon button that's always clickable"""
+    global gear_button, gear_window
+    
+    # Remove existing gear window if it exists
+    if gear_window:
+        try:
+            gear_window.destroy()
+        except:
+            pass
+        gear_window = None
+    
+    # Remove existing gear button if it exists
+    if gear_button:
+        try:
+            gear_button.destroy()
+        except:
+            pass
+        gear_button = None
+    
+    # Create a small button with gear icon on main window
+    gear_button = tk.Button(
+        root,
+        text="⚙",
+        font=('Arial', 12),
+        fg='white',
+        bg='black',
+        activebackground='gray',
+        activeforeground='white',
+        relief='flat',
+        borderwidth=0,
+        cursor='hand2',
+        command=lambda: show_gear_menu()
+    )
+    
+    # Position in top-right corner
+    gear_button.place(x=window_width - 30, y=5, width=25, height=25)
+
+def create_gear_window():
+    """Create a separate window for gear icon when click-through is enabled"""
+    global gear_window
+    
+    # Remove existing gear window if it exists
+    if gear_window:
+        try:
+            gear_window.destroy()
+        except:
+            pass
+    
+    # Create a small separate window for the gear icon
+    gear_window = tk.Toplevel(root)
+    gear_window.overrideredirect(True)
+    gear_window.attributes('-topmost', True)
+    gear_window.attributes('-alpha', base_alpha)
+    gear_window.configure(bg='black')
+    
+    # Make it small (30x30)
+    gear_window.geometry('30x30')
+    
+    # Create gear button in the separate window
+    gear_btn = tk.Button(
+        gear_window,
+        text="⚙",
+        font=('Arial', 12),
+        fg='white',
+        bg='black',
+        activebackground='gray',
+        activeforeground='white',
+        relief='flat',
+        borderwidth=0,
+        cursor='hand2',
+        command=lambda: show_gear_menu()
+    )
+    gear_btn.pack(fill=tk.BOTH, expand=True)
+    
+    # Position it near the main window's top-right corner
+    update_gear_window_position()
+
+def update_gear_window_position():
+    """Update gear window position to follow main window"""
+    global gear_window
+    if gear_window:
+        try:
+            main_x = root.winfo_x()
+            main_y = root.winfo_y()
+            # Position at top-right of main window
+            gear_x = main_x + window_width - 30
+            gear_y = main_y + 5
+            gear_window.geometry(f'30x30+{gear_x}+{gear_y}')
+        except:
+            pass
+
+def periodic_gear_update():
+    """Periodically update gear window position"""
+    if left_click_through_mode and gear_window:
+        update_gear_window_position()
+    root.after(100, periodic_gear_update)  # Update every 100ms
+
+def show_gear_menu():
+    """Show context menu when gear icon is clicked"""
+    global menu_open
+    menu_open = True
+    update_opacity()
+    
+    # Get gear button position
+    if gear_button:
+        x = root.winfo_x() + gear_button.winfo_x() + gear_button.winfo_width()
+        y = root.winfo_y() + gear_button.winfo_y() + gear_button.winfo_height()
+    else:
+        x = root.winfo_x() + window_width - 30
+        y = root.winfo_y() + 30
+    
+    update_menu()
+    try:
+        context_menu.tk_popup(x, y)
+    finally:
+        context_menu.grab_release()
+        menu_open = False
+        update_opacity()
+
+# Create gear button
+create_gear_button()
 
 # Variable to track if we're in edit mode
 edit_entry = None
@@ -112,6 +240,8 @@ def on_drag(event):
         # Update start position for next drag event
         start_x = event.x_root
         start_y = event.y_root
+        # Update gear window position to follow main window
+        update_gear_window_position()
         print(f"DEBUG: Window moved, updated window_x = {window_x}, window_y = {window_y}")
     else:
         if not move_mode:
@@ -143,12 +273,18 @@ def set_lock_mode():
 
 # Update opacity based on current state
 def update_opacity():
-    """Update window opacity based on dragging, menu, and shift state"""
-    global dragging, menu_open, shift_pressed_state, auto_hide_mode
+    """Update window opacity based on dragging, menu, shift state, and edit mode"""
+    global dragging, menu_open, shift_pressed_state, auto_hide_mode, edit_entry, gear_window
     
-    # If dragging, menu is open, or shift is pressed, use full opacity
-    if dragging or menu_open or shift_pressed_state:
+    # If dragging, menu is open, shift is pressed, or editing text, use full opacity
+    if dragging or menu_open or shift_pressed_state or (edit_entry is not None):
         root.attributes('-alpha', 1.0)
+        # Update gear window opacity too
+        if gear_window:
+            try:
+                gear_window.attributes('-alpha', 1.0)
+            except:
+                pass
     elif auto_hide_mode:
         # Auto-hide mode will handle its own opacity in check_cursor_proximity
         # Don't override it here
@@ -156,6 +292,12 @@ def update_opacity():
     else:
         # Normal state - use base alpha
         root.attributes('-alpha', base_alpha)
+        # Update gear window opacity too
+        if gear_window:
+            try:
+                gear_window.attributes('-alpha', base_alpha)
+            except:
+                pass
 
 # Toggle auto hide mode
 def toggle_auto_hide():
@@ -169,16 +311,36 @@ def toggle_auto_hide():
         update_opacity()
     update_menu()
 
-# Set click-through state using Windows API
-def set_click_through(enabled):
-    """Enable or disable click-through mode using WS_EX_TRANSPARENT"""
+# Check if Shift key is held for opacity control
+def check_shift_key():
+    global shift_pressed_state
+    try:
+        # Check if Shift key is currently pressed
+        # VK_LSHIFT = 0xA0, VK_RSHIFT = 0xA1
+        shift_pressed = (ctypes.windll.user32.GetAsyncKeyState(0xA0) & 0x8000 != 0) or \
+                       (ctypes.windll.user32.GetAsyncKeyState(0xA1) & 0x8000 != 0)
+        
+        # Update shift_pressed_state for opacity control
+        shift_pressed_state = shift_pressed
+        
+        # Update opacity based on shift state
+        update_opacity()
+        
+        # Continue monitoring
+        root.after(50, check_shift_key)  # Check every 50ms
+    except Exception as e:
+        print(f"DEBUG: Error in check_shift_key: {e}")
+        root.after(50, check_shift_key)
+
+# Set left click-through state using Windows API
+def set_left_click_through(enabled):
+    """Enable or disable left click-through mode using WS_EX_TRANSPARENT"""
     try:
         # Windows API constants
         GWL_EXSTYLE = -20
         WS_EX_TRANSPARENT = 0x00000020
         
-        # Get window handle - tkinter uses a different method
-        # For tkinter, we need to get the root window's handle
+        # Get window handle
         hwnd = ctypes.windll.user32.GetParent(root.winfo_id())
         
         if hwnd == 0:
@@ -191,84 +353,150 @@ def set_click_through(enabled):
         if enabled:
             # Enable click-through by adding WS_EX_TRANSPARENT
             style |= WS_EX_TRANSPARENT
-            print("DEBUG: Enabling click-through mode")
+            print("DEBUG: Enabling left click-through mode")
         else:
             # Disable click-through by removing WS_EX_TRANSPARENT
             style &= ~WS_EX_TRANSPARENT
-            print("DEBUG: Disabling click-through mode")
+            print("DEBUG: Disabling left click-through mode")
         
         # Set the new style
         ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
         return True
     except Exception as e:
-        print(f"DEBUG: Error setting click-through: {e}")
+        print(f"DEBUG: Error setting left click-through: {e}")
         return False
 
-# Check if Shift key is held and temporarily disable click-through if needed
-def check_shift_key():
-    global click_through_mode, shift_pressed_state
-    try:
-        # Check if Shift key is currently pressed
-        # VK_LSHIFT = 0xA0, VK_RSHIFT = 0xA1
-        shift_pressed = (ctypes.windll.user32.GetAsyncKeyState(0xA0) & 0x8000 != 0) or \
-                       (ctypes.windll.user32.GetAsyncKeyState(0xA1) & 0x8000 != 0)
-        
-        # Update shift_pressed_state (always track, not just in click-through mode)
-        shift_pressed_state = shift_pressed
-        
-        # Only handle click-through logic if click-through mode is enabled
-        if click_through_mode:
-            # Temporarily disable click-through when Shift is held
-            if shift_pressed:
-                if not hasattr(check_shift_key, 'temp_disabled'):
-                    set_click_through(False)
-                    check_shift_key.temp_disabled = True
-            else:
-                if hasattr(check_shift_key, 'temp_disabled') and check_shift_key.temp_disabled:
-                    set_click_through(True)
-                    check_shift_key.temp_disabled = False
-        
-        # Update opacity based on shift state
-        update_opacity()
-        
-        # Always continue monitoring (even when click-through is disabled)
-        root.after(50, check_shift_key)  # Check every 50ms
-    except Exception as e:
-        print(f"DEBUG: Error in check_shift_key: {e}")
-        root.after(50, check_shift_key)
-
-# Toggle click through mode
-def toggle_click_through():
-    global click_through_mode
-    click_through_mode = not click_through_mode
-    print(f"DEBUG: Click through mode = {click_through_mode}")
+# Check for right mouse button to temporarily disable click-through
+def check_right_mouse_button():
+    global left_click_through_mode, menu_open
+    if not left_click_through_mode:
+        return
     
-    if set_click_through(click_through_mode):
-        if click_through_mode:
-            print("DEBUG: Click-through enabled - clicks will pass through")
-            print("DEBUG: Use Shift+Right-click to access menu")
+    try:
+        # Check if right mouse button is currently pressed
+        # VK_RBUTTON = 0x02
+        right_button_pressed = (ctypes.windll.user32.GetAsyncKeyState(0x02) & 0x8000 != 0)
+        
+        # Track when right button was just pressed (for edge detection)
+        if not hasattr(check_right_mouse_button, 'last_right_state'):
+            check_right_mouse_button.last_right_state = False
+            check_right_mouse_button.right_click_time = 0
+        
+        # Detect right button press (edge detection)
+        right_button_just_pressed = right_button_pressed and not check_right_mouse_button.last_right_state
+        check_right_mouse_button.last_right_state = right_button_pressed
+        
+        # Record time when right button was pressed
+        if right_button_just_pressed:
+            check_right_mouse_button.right_click_time = time.time()
+        
+        # Get cursor position and window bounds to check if cursor is over window
+        cursor_x = root.winfo_pointerx()
+        cursor_y = root.winfo_pointery()
+        win_x = root.winfo_x()
+        win_y = root.winfo_y()
+        win_width = root.winfo_width()
+        win_height = root.winfo_height()
+        
+        # Check if cursor is over the window
+        cursor_over_window = (win_x <= cursor_x <= win_x + win_width and 
+                             win_y <= cursor_y <= win_y + win_height)
+        
+        # Check if right-click happened recently (within last 3 seconds)
+        time_since_right_click = time.time() - check_right_mouse_button.right_click_time if hasattr(check_right_mouse_button, 'right_click_time') else 999
+        recent_right_click = time_since_right_click < 3.0
+        
+        # Keep click-through disabled when:
+        # 1. Right button is pressed
+        # 2. Menu is open
+        # 3. Cursor is over window (to allow right-clicks to work)
+        # 4. Right-click happened recently (to ensure menu can be accessed)
+        should_disable = right_button_pressed or menu_open or cursor_over_window or recent_right_click
+        
+        if should_disable:
+            if not hasattr(check_right_mouse_button, 'temp_disabled'):
+                set_left_click_through(False)
+                check_right_mouse_button.temp_disabled = True
+                if hasattr(check_right_mouse_button, 'delay_counter'):
+                    check_right_mouse_button.delay_counter = 0
         else:
-            print("DEBUG: Click-through disabled - clicks will be captured")
+            # Only re-enable click-through when cursor is NOT over window
+            # and right button is not pressed and menu is not open and no recent right-click
+            if hasattr(check_right_mouse_button, 'temp_disabled') and check_right_mouse_button.temp_disabled:
+                if not hasattr(check_right_mouse_button, 'delay_counter'):
+                    check_right_mouse_button.delay_counter = 0
+                check_right_mouse_button.delay_counter += 1
+                # Wait 40 checks (2 seconds at 50ms intervals) before re-enabling
+                # This gives enough time for right-clicks to be processed
+                if check_right_mouse_button.delay_counter >= 40:
+                    set_left_click_through(True)
+                    check_right_mouse_button.temp_disabled = False
+                    check_right_mouse_button.delay_counter = 0
+        
+        # Continue monitoring - use faster check when click-through is disabled
+        # to be more responsive to right-clicks
+        check_interval = 20 if (hasattr(check_right_mouse_button, 'temp_disabled') and 
+                               check_right_mouse_button.temp_disabled) else 50
+        root.after(check_interval, check_right_mouse_button)
+    except Exception as e:
+        print(f"DEBUG: Error in check_right_mouse_button: {e}")
+        if left_click_through_mode:
+            root.after(50, check_right_mouse_button)
+
+# Toggle left click through mode
+def toggle_left_click_through():
+    global left_click_through_mode
+    left_click_through_mode = not left_click_through_mode
+    print(f"DEBUG: Left click through mode = {left_click_through_mode}")
+    
+    if set_left_click_through(left_click_through_mode):
+        if left_click_through_mode:
+            print("DEBUG: Left click-through enabled - left clicks will pass through")
+            print("DEBUG: Right clicks will always work")
+            # Create separate gear window (clickable even with click-through)
+            create_gear_window()
+            # Hide gear button on main window
+            if gear_button:
+                gear_button.place_forget()
+            # Start monitoring right mouse button
+            check_right_mouse_button()
+        else:
+            print("DEBUG: Left click-through disabled - all clicks will be captured")
+            # Remove gear window and show gear button on main window
+            if gear_window:
+                try:
+                    gear_window.destroy()
+                except:
+                    pass
+            create_gear_button()
             # Clean up temp_disabled flag
-            if hasattr(check_shift_key, 'temp_disabled'):
-                delattr(check_shift_key, 'temp_disabled')
+            if hasattr(check_right_mouse_button, 'temp_disabled'):
+                delattr(check_right_mouse_button, 'temp_disabled')
+            if hasattr(check_right_mouse_button, 'delay_counter'):
+                delattr(check_right_mouse_button, 'delay_counter')
     else:
         # Fallback: if Windows API fails, revert the toggle
-        click_through_mode = not click_through_mode
-        print("DEBUG: Failed to set click-through mode")
+        left_click_through_mode = not left_click_through_mode
+        print("DEBUG: Failed to set left click-through mode")
     
     update_menu()
 
 # Check cursor proximity for auto-hide mode
 def check_cursor_proximity():
-    global auto_hide_mode, dragging, menu_open, shift_pressed_state
+    global auto_hide_mode, dragging, menu_open, shift_pressed_state, edit_entry
     if not auto_hide_mode:
         return
     
     try:
-        # If dragging, menu is open, or shift is pressed, use full opacity
-        if dragging or menu_open or shift_pressed_state:
+        # If dragging, menu is open, shift is pressed, or editing text, use full opacity
+        if dragging or menu_open or shift_pressed_state or (edit_entry is not None):
             root.attributes('-alpha', 1.0)
+            # Update gear window opacity too
+            if gear_window:
+                try:
+                    gear_window.attributes('-alpha', 1.0)
+                except:
+                    pass
             # Schedule next check
             root.after(50, check_cursor_proximity)
             return
@@ -311,6 +539,12 @@ def check_cursor_proximity():
         alpha = max(0.02, min(base_alpha, alpha))
         
         root.attributes('-alpha', alpha)
+        # Update gear window opacity too
+        if gear_window:
+            try:
+                gear_window.attributes('-alpha', alpha)
+            except:
+                pass
         
         # Schedule next check (check every 50ms for smooth transitions)
         root.after(50, check_cursor_proximity)
@@ -357,6 +591,8 @@ def edit_text():
         edit_entry.bind('<ButtonRelease-1>', stop_drag)
         edit_entry.bind('<Button-3>', show_context_menu)
         
+        # Set opacity to 100% when editing
+        update_opacity()
         update_menu()
 
 # Save edited text
@@ -386,6 +622,8 @@ def save_text(event=None):
         label.bind('<ButtonRelease-1>', stop_drag)
         label.bind('<Button-3>', show_context_menu)
         
+        # Restore appropriate opacity after editing
+        update_opacity()
         update_menu()
 
 # Cancel editing
@@ -414,6 +652,8 @@ def cancel_edit(event=None):
         label.bind('<Button-3>', show_context_menu)
         
         original_text = None
+        # Restore appropriate opacity after canceling edit
+        update_opacity()
         update_menu()
 
 # Update context menu to show current mode
@@ -430,10 +670,10 @@ def update_menu():
         context_menu.add_command(label="Auto hide mode ✓", command=toggle_auto_hide)
     else:
         context_menu.add_command(label="Auto hide mode", command=toggle_auto_hide)
-    if click_through_mode:
-        context_menu.add_command(label="Click through mode ✓", command=toggle_click_through)
+    if left_click_through_mode:
+        context_menu.add_command(label="Left Click through mode ✓", command=toggle_left_click_through)
     else:
-        context_menu.add_command(label="Click through mode", command=toggle_click_through)
+        context_menu.add_command(label="Left Click through mode", command=toggle_left_click_through)
     context_menu.add_separator()
     if edit_entry is None:
         context_menu.add_command(label="Edit text", command=edit_text)
@@ -449,15 +689,6 @@ update_menu()
 # Function to show context menu on right-click
 def show_context_menu(event):
     global menu_open
-    # If click-through mode is enabled, only show menu when Shift is held
-    if click_through_mode:
-        # Check if Shift key is pressed (state bit 0x0001 is Shift)
-        shift_pressed = (event.state & 0x0001) != 0
-        if not shift_pressed:
-            print("DEBUG: Click-through mode active - Shift+Right-click required")
-            return
-        print("DEBUG: Shift+Right-click detected in click-through mode")
-    
     menu_open = True
     # Set opacity to 100% when menu opens
     update_opacity()
@@ -507,6 +738,9 @@ root.bind('<Escape>', handle_escape)
 
 # Start monitoring Shift key for opacity control
 check_shift_key()
+
+# Start periodic gear window position update
+periodic_gear_update()
 
 # Run the application
 root.mainloop()
