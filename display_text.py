@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import font
 import math
+import ctypes
 
 # Create the main window
 root = tk.Tk()
@@ -33,6 +34,11 @@ window_y = y
 # Base transparency settings
 base_alpha = 0.9  # Normal transparency
 auto_hide_mode = False  # Auto hide mode state
+click_through_mode = False  # Click through mode state
+
+# Track states that require full opacity
+menu_open = False
+shift_pressed_state = False
 
 # Make window background transparent (optional)
 root.attributes('-alpha', base_alpha)  # 0.0 = fully transparent, 1.0 = fully opaque
@@ -80,6 +86,8 @@ def start_drag(event):
         window_x = root.winfo_x()
         window_y = root.winfo_y()
         dragging = True
+        # Set opacity to 100% when dragging
+        update_opacity()
         print(f"DEBUG: Drag started - start_x = {start_x}, start_y = {start_y}")
         print(f"DEBUG: Window position stored - window_x = {window_x}, window_y = {window_y}")
     else:
@@ -133,6 +141,22 @@ def set_lock_mode():
     print(f"DEBUG: move_mode set to {move_mode}")
     update_menu()
 
+# Update opacity based on current state
+def update_opacity():
+    """Update window opacity based on dragging, menu, and shift state"""
+    global dragging, menu_open, shift_pressed_state, auto_hide_mode
+    
+    # If dragging, menu is open, or shift is pressed, use full opacity
+    if dragging or menu_open or shift_pressed_state:
+        root.attributes('-alpha', 1.0)
+    elif auto_hide_mode:
+        # Auto-hide mode will handle its own opacity in check_cursor_proximity
+        # Don't override it here
+        pass
+    else:
+        # Normal state - use base alpha
+        root.attributes('-alpha', base_alpha)
+
 # Toggle auto hide mode
 def toggle_auto_hide():
     global auto_hide_mode
@@ -141,17 +165,114 @@ def toggle_auto_hide():
     if auto_hide_mode:
         check_cursor_proximity()
     else:
-        # Restore base alpha
-        root.attributes('-alpha', base_alpha)
+        # Restore appropriate alpha based on current state
+        update_opacity()
+    update_menu()
+
+# Set click-through state using Windows API
+def set_click_through(enabled):
+    """Enable or disable click-through mode using WS_EX_TRANSPARENT"""
+    try:
+        # Windows API constants
+        GWL_EXSTYLE = -20
+        WS_EX_TRANSPARENT = 0x00000020
+        
+        # Get window handle - tkinter uses a different method
+        # For tkinter, we need to get the root window's handle
+        hwnd = ctypes.windll.user32.GetParent(root.winfo_id())
+        
+        if hwnd == 0:
+            # Try alternative method
+            hwnd = root.winfo_id()
+        
+        # Get current extended window style
+        style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+        
+        if enabled:
+            # Enable click-through by adding WS_EX_TRANSPARENT
+            style |= WS_EX_TRANSPARENT
+            print("DEBUG: Enabling click-through mode")
+        else:
+            # Disable click-through by removing WS_EX_TRANSPARENT
+            style &= ~WS_EX_TRANSPARENT
+            print("DEBUG: Disabling click-through mode")
+        
+        # Set the new style
+        ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
+        return True
+    except Exception as e:
+        print(f"DEBUG: Error setting click-through: {e}")
+        return False
+
+# Check if Shift key is held and temporarily disable click-through if needed
+def check_shift_key():
+    global click_through_mode, shift_pressed_state
+    try:
+        # Check if Shift key is currently pressed
+        # VK_LSHIFT = 0xA0, VK_RSHIFT = 0xA1
+        shift_pressed = (ctypes.windll.user32.GetAsyncKeyState(0xA0) & 0x8000 != 0) or \
+                       (ctypes.windll.user32.GetAsyncKeyState(0xA1) & 0x8000 != 0)
+        
+        # Update shift_pressed_state (always track, not just in click-through mode)
+        shift_pressed_state = shift_pressed
+        
+        # Only handle click-through logic if click-through mode is enabled
+        if click_through_mode:
+            # Temporarily disable click-through when Shift is held
+            if shift_pressed:
+                if not hasattr(check_shift_key, 'temp_disabled'):
+                    set_click_through(False)
+                    check_shift_key.temp_disabled = True
+            else:
+                if hasattr(check_shift_key, 'temp_disabled') and check_shift_key.temp_disabled:
+                    set_click_through(True)
+                    check_shift_key.temp_disabled = False
+        
+        # Update opacity based on shift state
+        update_opacity()
+        
+        # Always continue monitoring (even when click-through is disabled)
+        root.after(50, check_shift_key)  # Check every 50ms
+    except Exception as e:
+        print(f"DEBUG: Error in check_shift_key: {e}")
+        root.after(50, check_shift_key)
+
+# Toggle click through mode
+def toggle_click_through():
+    global click_through_mode
+    click_through_mode = not click_through_mode
+    print(f"DEBUG: Click through mode = {click_through_mode}")
+    
+    if set_click_through(click_through_mode):
+        if click_through_mode:
+            print("DEBUG: Click-through enabled - clicks will pass through")
+            print("DEBUG: Use Shift+Right-click to access menu")
+        else:
+            print("DEBUG: Click-through disabled - clicks will be captured")
+            # Clean up temp_disabled flag
+            if hasattr(check_shift_key, 'temp_disabled'):
+                delattr(check_shift_key, 'temp_disabled')
+    else:
+        # Fallback: if Windows API fails, revert the toggle
+        click_through_mode = not click_through_mode
+        print("DEBUG: Failed to set click-through mode")
+    
     update_menu()
 
 # Check cursor proximity for auto-hide mode
 def check_cursor_proximity():
-    global auto_hide_mode
+    global auto_hide_mode, dragging, menu_open, shift_pressed_state
     if not auto_hide_mode:
         return
     
     try:
+        # If dragging, menu is open, or shift is pressed, use full opacity
+        if dragging or menu_open or shift_pressed_state:
+            root.attributes('-alpha', 1.0)
+            # Schedule next check
+            root.after(50, check_cursor_proximity)
+            return
+        
         # Get cursor position (screen coordinates)
         cursor_x = root.winfo_pointerx()
         cursor_y = root.winfo_pointery()
@@ -309,6 +430,10 @@ def update_menu():
         context_menu.add_command(label="Auto hide mode ✓", command=toggle_auto_hide)
     else:
         context_menu.add_command(label="Auto hide mode", command=toggle_auto_hide)
+    if click_through_mode:
+        context_menu.add_command(label="Click through mode ✓", command=toggle_click_through)
+    else:
+        context_menu.add_command(label="Click through mode", command=toggle_click_through)
     context_menu.add_separator()
     if edit_entry is None:
         context_menu.add_command(label="Edit text", command=edit_text)
@@ -323,11 +448,28 @@ update_menu()
 
 # Function to show context menu on right-click
 def show_context_menu(event):
+    global menu_open
+    # If click-through mode is enabled, only show menu when Shift is held
+    if click_through_mode:
+        # Check if Shift key is pressed (state bit 0x0001 is Shift)
+        shift_pressed = (event.state & 0x0001) != 0
+        if not shift_pressed:
+            print("DEBUG: Click-through mode active - Shift+Right-click required")
+            return
+        print("DEBUG: Shift+Right-click detected in click-through mode")
+    
+    menu_open = True
+    # Set opacity to 100% when menu opens
+    update_opacity()
+    
     update_menu()  # Update menu to show current mode
     try:
         context_menu.tk_popup(event.x_root, event.y_root)
     finally:
         context_menu.grab_release()
+        menu_open = False
+        # Restore appropriate opacity after menu closes
+        update_opacity()
 
 # Stop dragging when mouse button is released
 def stop_drag(event):
@@ -337,6 +479,8 @@ def stop_drag(event):
     # Update window position from actual window position
     window_x = root.winfo_x()
     window_y = root.winfo_y()
+    # Restore appropriate opacity after dragging stops
+    update_opacity()
     print(f"DEBUG: Updated window position after drag - window_x = {window_x}, window_y = {window_y}")
 
 # Bind mouse events for dragging (only works in move mode)
@@ -360,6 +504,9 @@ def handle_escape(event=None):
         close_window()
 
 root.bind('<Escape>', handle_escape)
+
+# Start monitoring Shift key for opacity control
+check_shift_key()
 
 # Run the application
 root.mainloop()
