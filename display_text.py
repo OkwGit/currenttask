@@ -19,7 +19,7 @@ screen_height = root.winfo_screenheight()
 
 # Set window size (you can adjust these)
 window_width = 400
-window_height = 100
+window_height = 130  # Increased to accommodate timer
 
 # Calculate position to center the window
 x = (screen_width - window_width) // 2
@@ -59,6 +59,59 @@ label = tk.Label(
 
 # Center the label in the window
 label.pack(expand=True)
+
+# Timer variables
+timer_label = None
+timer_start_time = None
+timer_running = False
+
+def create_timer_label():
+    """Create a timer label below the text"""
+    global timer_label, timer_start_time, timer_running
+    
+    # Remove existing timer label if it exists
+    if timer_label:
+        try:
+            timer_label.destroy()
+        except:
+            pass
+    
+    # Create timer label
+    timer_label = tk.Label(
+        root,
+        text="00:00:00",
+        font=('Arial', 12),
+        fg='white',
+        bg='black',
+        justify='center'
+    )
+    timer_label.pack(pady=(0, 5))
+    
+    # Start timer if not already running
+    if not timer_running:
+        timer_start_time = time.time()
+        timer_running = True
+        update_timer()
+    else:
+        # Timer already running, just update the display
+        update_timer()
+
+def update_timer():
+    """Update the timer display"""
+    global timer_label, timer_start_time, timer_running
+    
+    if timer_label and timer_running and timer_start_time:
+        elapsed = time.time() - timer_start_time
+        hours = int(elapsed // 3600)
+        minutes = int((elapsed % 3600) // 60)
+        seconds = int(elapsed % 60)
+        timer_text = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        timer_label.config(text=timer_text)
+        # Schedule next update
+        root.after(1000, update_timer)  # Update every second
+
+# Create timer label
+create_timer_label()
 
 # Create gear icon button (always clickable)
 gear_button = None
@@ -616,6 +669,9 @@ def save_text(event=None):
         )
         label.pack(expand=True)
         
+        # Recreate timer label
+        create_timer_label()
+        
         # Rebind events to label
         label.bind('<Button-1>', start_drag)
         label.bind('<B1-Motion>', on_drag)
@@ -644,6 +700,9 @@ def cancel_edit(event=None):
             justify='center'
         )
         label.pack(expand=True)
+        
+        # Recreate timer label
+        create_timer_label()
         
         # Rebind events to label
         label.bind('<Button-1>', start_drag)
